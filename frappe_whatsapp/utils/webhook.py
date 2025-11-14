@@ -100,12 +100,18 @@ def handle_message(message, session):
 		"profile_name": message.get("_data", {}).get("notifyName", "")
 	})
 	
-	if message_type in ["image", "audio", "video", "document"]:
-		handle_media_message(message, message_doc, message_type)
-	else:
-		message_doc.insert(ignore_permissions=True)
-		if should_send_read_receipt():
-			message_doc.send_read_receipt()
+	try:
+		if message_type in ["image", "audio", "video", "document"]:
+			handle_media_message(message, message_doc, message_type)
+		else:
+			message_doc.insert(ignore_permissions=True)
+			if should_send_read_receipt():
+				message_doc.send_read_receipt()
+	except Exception as e:
+		frappe.log_error(
+			"WhatsApp Message Insert Failed",
+			f"Error inserting WhatsApp Message from {from_number}: {str(e)}\n\nMessage Data: {json.dumps(message, indent=2)}"
+		)
 
 
 def get_message_type(message):
@@ -289,12 +295,3 @@ def should_send_read_receipt():
 	"""Check if auto read receipt is enabled."""
 	settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
 	return settings.allow_auto_read_receipt
-
-	conversation = data['statuses'][0].get('conversation', {}).get('id')
-	name = frappe.db.get_value("WhatsApp Message", filters={"message_id": id})
-
-	doc = frappe.get_doc("WhatsApp Message", name)
-	doc.status = status
-	if conversation:
-		doc.conversation_id = conversation
-	doc.save(ignore_permissions=True)
