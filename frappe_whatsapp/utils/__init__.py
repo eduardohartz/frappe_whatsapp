@@ -25,10 +25,16 @@ def run_server_script_for_doc_event(doc, event):
     if notification:
         # run all scripts for this doctype + event
         for notification_name in notification:
-            frappe.get_doc(
-                "WhatsApp Notification",
-                notification_name
-            ).send_notification_message(doc)
+            try:
+                frappe.get_doc(
+                    "WhatsApp Notification",
+                    notification_name
+                ).send_notification_message(doc)
+            except Exception as e:
+                frappe.log_error(
+                    f"WhatsApp Notification Error: {notification_name}",
+                    f"Error running notification for {doc.doctype} {doc.name}: {str(e)}\n\n{frappe.get_traceback()}"
+                )
 
 
 def get_notifications_map():
