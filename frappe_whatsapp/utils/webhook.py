@@ -1,203 +1,295 @@
-"""Webhook."""
+"""Webhook for WAHA API."""
 import frappe
 import json
 import requests
-import time
+import hmac
+import hashlib
 from werkzeug.wrappers import Response
 import frappe.utils
 
 
 @frappe.whitelist(allow_guest=True)
 def webhook():
-	"""Meta webhook."""
+	"""WAHA webhook handler."""
 	if frappe.request.method == "GET":
-		return get()
+		return Response("WAHA webhook endpoint", status=200)
 	return post()
 
 
-def get():
-	"""Get."""
-	hub_challenge = frappe.form_dict.get("hub.challenge")
-	webhook_verify_token = frappe.db.get_single_value(
-		"WhatsApp Settings", "webhook_verify_token"
-	)
+def verify_hmac():
+	"""Verify HMAC signature from WAHA webhook."""
+	settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+	hmac_secret = settings.get_password("webhook_hmac_secret")
+	
+	if not hmac_secret:
+		return True
+	
+	received_hmac = frappe.request.headers.get("X-Webhook-Hmac")
+	if not received_hmac:
+		frappe.throw("Missing HMAC signature", frappe.AuthenticationError)
+	
+	body = frappe.request.get_data()
+	expected_hmac = hmac.new(
+		hmac_secret.encode(),
+		body,
+		hashlib.sha512
+	).hexdigest()
+	
+	if not hmac.compare_digest(received_hmac, expected_hmac):
+		frappe.throw("Invalid HMAC signature", frappe.AuthenticationError)
+	
+	return True
 
-	if frappe.form_dict.get("hub.verify_token") != webhook_verify_token:
-		frappe.throw("Verify token does not match")
-
-	return Response(hub_challenge, status=200)
 
 def post():
-	"""Post."""
+	"""Handle POST webhook from WAHA."""
+	verify_hmac()
+	
 	data = frappe.local.form_dict
+	
 	frappe.get_doc({
 		"doctype": "WhatsApp Notification Log",
 		"template": "Webhook",
 		"meta_data": json.dumps(data)
 	}).insert(ignore_permissions=True)
-
-	messages = []
-	try:
-		messages = data["entry"][0]["changes"][0]["value"].get("messages", [])
-	except KeyError:
-		messages = data["entry"]["changes"][0]["value"].get("messages", [])
-	sender_profile_name = next(
-		(
-			contact.get("profile", {}).get("name")
-			for entry in data.get("entry", [])
-			for change in entry.get("changes", [])
-			for contact in change.get("value", {}).get("contacts", [])
-		),
-		None,
-	)
-
-
-	if messages:
-		for message in messages:
-			message_type = message['type']
-			is_reply = True if message.get('context') and 'forwarded' not in message.get('context') else False
-			reply_to_message_id = message['context']['id'] if is_reply else None
-			if message_type == 'text':
-				frappe.get_doc({
-					"doctype": "WhatsApp Message",
-					"type": "Incoming",
-					"from": message['from'],
-					"message": message['text']['body'],
-					"message_id": message['id'],
-					"reply_to_message_id": reply_to_message_id,
-					"is_reply": is_reply,
-					"content_type":message_type,
-					"profile_name":sender_profile_name
-				}).insert(ignore_permissions=True)
-			elif message_type == 'reaction':
-				frappe.get_doc({
-					"doctype": "WhatsApp Message",
-					"type": "Incoming",
-					"from": message['from'],
-					"message": message['reaction']['emoji'],
-					"reply_to_message_id": message['reaction']['message_id'],
-					"message_id": message['id'],
-					"content_type": "reaction",
-					"profile_name":sender_profile_name
-				}).insert(ignore_permissions=True)
-			elif message_type == 'interactive':
-				frappe.get_doc({
-					"doctype": "WhatsApp Message",
-					"type": "Incoming",
-					"from": message['from'],
-					"message": message['interactive']['nfm_reply']['response_json'],
-					"message_id": message['id'],
-					"reply_to_message_id": reply_to_message_id,
-					"is_reply": is_reply,
-					"content_type": "flow",
-					"profile_name":sender_profile_name
-				}).insert(ignore_permissions=True)
-			elif message_type in ["image", "audio", "video", "document"]:
-				settings = frappe.get_doc(
-							"WhatsApp Settings", "WhatsApp Settings",
-						)
-				token = settings.get_password("token")
-				url = f"{settings.url}/{settings.version}/"
+	
+	event = data.get("event")
+	payload = data.get("payload", {})
+	session = data.get("session")
+	
+	if event == "message":
+		handle_message(payload, session)
+	elif event == "message.any":
+		handle_message(payload, session)
+	elif event == "message.reaction":
+		handle_reaction(payload, session)
+	elif event == "message.ack":
+		handle_message_ack(payload, session)
+	elif event == "message.revoked":
+		handle_message_revoked(payload, session)
+	elif event == "session.status":
+		handle_session_status(payload, session)
+	
+	return Response("OK", status=200)
 
 
-				media_id = message[message_type]["id"]
-				headers = {
-					'Authorization': 'Bearer ' + token
-
-				}
-				response = requests.get(f'{url}{media_id}/', headers=headers)
-
-				if response.status_code == 200:
-					media_data = response.json()
-					media_url = media_data.get("url")
-					mime_type = media_data.get("mime_type")
-					file_extension = mime_type.split('/')[1]
-
-					media_response = requests.get(media_url, headers=headers)
-					if media_response.status_code == 200:
-
-						file_data = media_response.content
-						file_name = f"{frappe.generate_hash(length=10)}.{file_extension}"
-
-						message_doc = frappe.get_doc({
-							"doctype": "WhatsApp Message",
-							"type": "Incoming",
-							"from": message['from'],
-							"message_id": message['id'],
-							"reply_to_message_id": reply_to_message_id,
-							"is_reply": is_reply,
-							"message": message[message_type].get("caption",f"/files/{file_name}"),
-							"content_type" : message_type,
-							"profile_name":sender_profile_name
-						}).insert(ignore_permissions=True)
-
-						file = frappe.get_doc(
-							{
-								"doctype": "File",
-								"file_name": file_name,
-								"attached_to_doctype": "WhatsApp Message",
-								"attached_to_name": message_doc.name,
-								"content": file_data,
-								"attached_to_field": "attach"
-							}
-						).save(ignore_permissions=True)
-
-
-						message_doc.attach = file.file_url
-						message_doc.save()
-			elif message_type == "button":
-				frappe.get_doc({
-					"doctype": "WhatsApp Message",
-					"type": "Incoming",
-					"from": message['from'],
-					"message": message['button']['text'],
-					"message_id": message['id'],
-					"reply_to_message_id": reply_to_message_id,
-					"is_reply": is_reply,
-					"content_type": message_type,
-					"profile_name":sender_profile_name
-				}).insert(ignore_permissions=True)
-			else:
-				frappe.get_doc({
-					"doctype": "WhatsApp Message",
-					"type": "Incoming",
-					"from": message['from'],
-					"message_id": message['id'],
-					"message": message[message_type].get(message_type),
-					"content_type" : message_type,
-					"profile_name":sender_profile_name
-				}).insert(ignore_permissions=True)
-
+def handle_message(message, session):
+	"""Handle incoming message event."""
+	if message.get("fromMe"):
+		return
+	
+	message_type = get_message_type(message)
+	message_body = get_message_body(message, message_type)
+	
+	is_reply = bool(message.get("replyTo"))
+	reply_to_message_id = message.get("replyTo")
+	
+	from_number = message.get("from", "")
+	if from_number.endswith("@c.us"):
+		from_number = from_number.replace("@c.us", "")
+	
+	message_doc = frappe.get_doc({
+		"doctype": "WhatsApp Message",
+		"type": "Incoming",
+		"from": from_number,
+		"message": message_body,
+		"message_id": message.get("id"),
+		"reply_to_message_id": reply_to_message_id,
+		"is_reply": is_reply,
+		"content_type": message_type,
+		"profile_name": message.get("_data", {}).get("notifyName", "")
+	})
+	
+	if message_type in ["image", "audio", "video", "document"]:
+		handle_media_message(message, message_doc, message_type)
 	else:
-		changes = None
-		try:
-			changes = data["entry"][0]["changes"][0]
-		except KeyError:
-			changes = data["entry"]["changes"][0]
-		update_status(changes)
-	return
+		message_doc.insert(ignore_permissions=True)
+		if should_send_read_receipt():
+			message_doc.send_read_receipt()
 
-def update_status(data):
-	"""Update status hook."""
-	if data.get("field") == "message_template_status_update":
-		update_template_status(data['value'])
 
-	elif data.get("field") == "messages":
-		update_message_status(data['value'])
+def get_message_type(message):
+	"""Determine message type from WAHA message payload."""
+	if message.get("body"):
+		return "text"
+	elif message.get("_data", {}).get("type") == "image":
+		return "image"
+	elif message.get("_data", {}).get("type") == "video":
+		return "video"
+	elif message.get("_data", {}).get("type") == "audio" or message.get("_data", {}).get("type") == "ptt":
+		return "audio"
+	elif message.get("_data", {}).get("type") == "document":
+		return "document"
+	elif message.get("reaction"):
+		return "reaction"
+	elif message.get("location"):
+		return "location"
+	elif message.get("vCards"):
+		return "contact"
+	
+	return "text"
 
-def update_template_status(data):
-	"""Update template status."""
-	frappe.db.sql(
-		"""UPDATE `tabWhatsApp Templates`
-		SET status = %(event)s
-		WHERE id = %(message_template_id)s""",
-		data
-	)
 
-def update_message_status(data):
-	"""Update message status."""
-	id = data['statuses'][0]['id']
-	status = data['statuses'][0]['status']
+def get_message_body(message, message_type):
+	"""Extract message body based on type."""
+	if message_type == "text":
+		return message.get("body", "")
+	elif message_type == "reaction":
+		return message.get("reaction", {}).get("text", "")
+	elif message_type == "location":
+		location = message.get("location", {})
+		return json.dumps(location)
+	elif message_type == "contact":
+		return json.dumps(message.get("vCards", []))
+	elif message_type in ["image", "video", "document", "audio"]:
+		return message.get("caption", "")
+	
+	return ""
+
+
+def handle_media_message(message, message_doc, message_type):
+	"""Download and attach media from WAHA message."""
+	media_url = message.get("media", {}).get("url")
+	
+	if not media_url:
+		message_doc.insert(ignore_permissions=True)
+		return
+	
+	settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+	api_key = settings.get_password("api_key")
+	
+	headers = {}
+	if api_key:
+		headers["X-Api-Key"] = api_key
+	
+	try:
+		response = requests.get(media_url, headers=headers, timeout=30)
+		response.raise_for_status()
+		
+		file_data = response.content
+		mime_type = message.get("media", {}).get("mimetype", "")
+		
+		file_extension = get_file_extension(mime_type, message_type)
+		file_name = f"{frappe.generate_hash(length=10)}.{file_extension}"
+		
+		message_doc.insert(ignore_permissions=True)
+		
+		file_doc = frappe.get_doc({
+			"doctype": "File",
+			"file_name": file_name,
+			"attached_to_doctype": "WhatsApp Message",
+			"attached_to_name": message_doc.name,
+			"content": file_data,
+			"attached_to_field": "attach"
+		}).save(ignore_permissions=True)
+		
+		message_doc.attach = file_doc.file_url
+		message_doc.message = message_doc.message or f"/files/{file_name}"
+		message_doc.save()
+		
+		if should_send_read_receipt():
+			message_doc.send_read_receipt()
+	
+	except Exception as e:
+		frappe.log_error("WAHA Media Download Error", str(e))
+		message_doc.insert(ignore_permissions=True)
+
+
+def get_file_extension(mime_type, message_type):
+	"""Get file extension from mime type."""
+	mime_map = {
+		"image/jpeg": "jpg",
+		"image/jpg": "jpg",
+		"image/png": "png",
+		"image/webp": "webp",
+		"video/mp4": "mp4",
+		"audio/ogg": "ogg",
+		"audio/mpeg": "mp3",
+		"application/pdf": "pdf",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+	}
+	
+	extension = mime_map.get(mime_type)
+	if extension:
+		return extension
+	
+	if "/" in mime_type:
+		return mime_type.split("/")[1].split(";")[0]
+	
+	type_map = {
+		"image": "jpg",
+		"video": "mp4",
+		"audio": "ogg",
+		"document": "pdf"
+	}
+	return type_map.get(message_type, "bin")
+
+
+def handle_reaction(payload, session):
+	"""Handle reaction event."""
+	reaction = payload.get("reaction", {})
+	from_number = payload.get("from", "").replace("@c.us", "")
+	
+	frappe.get_doc({
+		"doctype": "WhatsApp Message",
+		"type": "Incoming",
+		"from": from_number,
+		"message": reaction.get("text", ""),
+		"reply_to_message_id": reaction.get("messageId"),
+		"message_id": payload.get("id"),
+		"content_type": "reaction"
+	}).insert(ignore_permissions=True)
+
+
+def handle_message_ack(payload, session):
+	"""Update message status based on ack."""
+	message_id = payload.get("id")
+	ack = payload.get("ack")
+	ack_name = payload.get("ackName")
+	
+	if message_id:
+		messages = frappe.get_all(
+			"WhatsApp Message",
+			filters={"message_id": message_id},
+			limit=1
+		)
+		
+		if messages:
+			message_doc = frappe.get_doc("WhatsApp Message", messages[0].name)
+			message_doc.status = ack_name or f"ACK {ack}"
+			message_doc.save(ignore_permissions=True)
+
+
+def handle_message_revoked(payload, session):
+	"""Handle message revoked event."""
+	revoked_message_id = payload.get("revokedMessageId")
+	
+	if revoked_message_id:
+		messages = frappe.get_all(
+			"WhatsApp Message",
+			filters={"message_id": revoked_message_id},
+			limit=1
+		)
+		
+		if messages:
+			message_doc = frappe.get_doc("WhatsApp Message", messages[0].name)
+			message_doc.status = "Revoked"
+			message_doc.message = "[Message deleted]"
+			message_doc.save(ignore_permissions=True)
+
+
+def handle_session_status(payload, session):
+	"""Log session status changes."""
+	status = payload.get("status")
+	frappe.log_error("WAHA Session Status", f"Session {session}: {status}")
+
+
+def should_send_read_receipt():
+	"""Check if auto read receipt is enabled."""
+	settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+	return settings.allow_auto_read_receipt
+
 	conversation = data['statuses'][0].get('conversation', {}).get('id')
 	name = frappe.db.get_value("WhatsApp Message", filters={"message_id": id})
 

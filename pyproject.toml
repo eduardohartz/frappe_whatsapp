@@ -3,7 +3,7 @@ name = "frappe_whatsapp"
 authors = [
     { name = "Shridhar Patil", email = "shrip.dev@gmail.com"}
 ]
-description = "WhatsApp integration for frappe. Use directly meta API's without any 3rd party integration."
+description = "WhatsApp integration for Frappe using WAHA (WhatsApp HTTP API). Simple, direct messaging without templates."
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]

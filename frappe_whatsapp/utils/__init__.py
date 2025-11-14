@@ -28,7 +28,7 @@ def run_server_script_for_doc_event(doc, event):
             frappe.get_doc(
                 "WhatsApp Notification",
                 notification_name
-            ).send_template_message(doc)
+            ).send_notification_message(doc)
 
 
 def get_notifications_map():

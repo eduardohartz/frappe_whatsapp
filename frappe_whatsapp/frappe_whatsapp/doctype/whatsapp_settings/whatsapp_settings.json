@@ -8,46 +8,12 @@
  "field_order": [
   "enabled",
   "allow_auto_read_receipt",
-  "token",
-  "url",
-  "version",
-  "phone_id",
-  "business_id",
-  "app_id",
-  "webhook_verify_token"
+  "waha_url",
+  "api_key",
+  "session_name",
+  "webhook_hmac_secret"
  ],
  "fields": [
-  {
-   "fieldname": "token",
-   "fieldtype": "Password",
-   "label": "Token",
-   "length": 250
-  },
-  {
-   "fieldname": "url",
-   "fieldtype": "Data",
-   "label": "URL"
-  },
-  {
-   "fieldname": "version",
-   "fieldtype": "Data",
-   "label": "Version"
-  },
-  {
-   "fieldname": "phone_id",
-   "fieldtype": "Data",
-   "label": "Phone ID"
-  },
-  {
-   "fieldname": "business_id",
-   "fieldtype": "Data",
-   "label": "Business ID"
-  },
-  {
-   "fieldname": "webhook_verify_token",
-   "fieldtype": "Data",
-   "label": "Webhook Verify Token"
-  },
   {
    "default": "0",
    "fieldname": "enabled",
@@ -55,15 +21,37 @@
    "label": "Enabled"
   },
   {
-   "fieldname": "app_id",
-   "fieldtype": "Data",
-   "label": "App ID"
-  },
-  {
    "default": "1",
    "fieldname": "allow_auto_read_receipt",
    "fieldtype": "Check",
    "label": "Allow Auto Read Receipt"
+  },
+  {
+   "fieldname": "waha_url",
+   "fieldtype": "Data",
+   "label": "WAHA URL",
+   "description": "WAHA server URL (e.g., http://localhost:3000)"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "length": 250,
+   "description": "X-Api-Key for WAHA authentication"
+  },
+  {
+   "default": "default",
+   "fieldname": "session_name",
+   "fieldtype": "Data",
+   "label": "Session Name",
+   "description": "WAHA session name (default: default)"
+  },
+  {
+   "fieldname": "webhook_hmac_secret",
+   "fieldtype": "Password",
+   "label": "Webhook HMAC Secret",
+   "length": 250,
+   "description": "Secret key for HMAC webhook authentication"
   }
  ],
  "grid_page_length": 50,

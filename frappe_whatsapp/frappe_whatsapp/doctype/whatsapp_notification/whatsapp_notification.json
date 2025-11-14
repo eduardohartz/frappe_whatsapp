@@ -17,7 +17,7 @@
   "date_changed",
   "column_break_3",
   "disabled",
-  "template",
+  "message",
   "code",
   "attach_document_print",
   "custom_attachment",
@@ -32,8 +32,7 @@
   "set_property_after_alert",
   "property_value",
   "help_section",
-  "help_html",
-  "header_type"
+  "help_html"
  ],
  "fields": [
   {
@@ -78,7 +77,7 @@
   {
    "fieldname": "help_html",
    "fieldtype": "HTML",
-   "options": "<pre><code>doc.grand_total &gt; 0</code></pre>\n\n<p>Conditions should be written in simple Python. Please use properties available in the form only.</p>\n\n<p>Example: </p><pre><code>doc.status=='Enabled' </code></pre><p></p>\n\n<p> For scheduler events you can use follwing methods</p>\n<p>Allowed functions: </p><ul>\n<li>frappe.db.get_value</li>\n<li>frappe.db.get_list</li>\n<li>frappe.session</li>\n<li>frappe.utils.now_datetime</li>\n<li>frappe.utils.get_datetime</li>\n<li>frappe.utils.add_to_date</li>\n<li>frappe.utils.now</li>\n</ul>\n<p>Example: </p><pre><code>doc.creation &gt; frappe.utils.add_to_date(frappe.utils.now_datetime(\n), days=-5, as_string=True, as_datetime=True) </code></pre><p></p>\n\n<p>\n\t<strong>For scheduled events, use </strong>\n<br>\n1. Simple template sending, without parameters, just send a template\n</p><pre><code class=\"language-python\">\ndoc.set(\"_contact_list\", [\"919123456789\"])\n</code>\n</pre>\n\n2. Message based on doctype with parameters\n<pre><code class=\"language-python\">\nquotation_list = frappe.get_list(\"Quotation\", {\"name\": \"VEN-COT-24-29806\", \"custom_whatsapp_notify\": 0})\nfor qo in quotation_list:\n\tdata_list.append({\n\t\t\"name\": qo.name,\n\t\t\"phone_no\": \"5548996436821\",\n\t})\ndoc.set(\"_data_list\", data_list)\n</code>\n</pre>\n\n<p></p> "
+   "options": "<pre><code>doc.grand_total &gt; 0</code></pre>\n\n<p>Conditions should be written in simple Python. Please use properties available in the form only.</p>\n\n<p>Example: </p><pre><code>doc.status=='Enabled' </code></pre><p></p>\n\n<p> For scheduler events you can use follwing methods</p>\n<p>Allowed functions: </p><ul>\n<li>frappe.db.get_value</li>\n<li>frappe.db.get_list</li>\n<li>frappe.session</li>\n<li>frappe.utils.now_datetime</li>\n<li>frappe.utils.get_datetime</li>\n<li>frappe.utils.add_to_date</li>\n<li>frappe.utils.now</li>\n</ul>\n<p>Example: </p><pre><code>doc.creation &gt; frappe.utils.add_to_date(frappe.utils.now_datetime(\n), days=-5, as_string=True, as_datetime=True) </code></pre><p></p>\n\n<p>\n\t<strong>For scheduled events, use </strong>\n<br>\n1. Simple message sending to contact list:\n</p><pre><code class=\"language-python\">\ndoc.set(\"_contact_list\", [\"919123456789\"])\n</code>\n</pre>\n\n2. Message based on doctype with field values:\n<pre><code class=\"language-python\">\ndata_list = []\nquotation_list = frappe.get_list(\"Quotation\", {\"name\": \"VEN-COT-24-29806\", \"custom_whatsapp_notify\": 0})\nfor qo in quotation_list:\n\tdata_list.append({\n\t\t\"name\": qo.name,\n\t\t\"phone_no\": \"5548996436821\",\n\t})\ndoc.set(\"_data_list\", data_list)\n</code>\n</pre>\n\n<p></p> "
   },
   {
    "fieldname": "notification_type",
@@ -90,11 +89,17 @@
    "reqd": 1
   },
   {
-   "fieldname": "template",
-   "fieldtype": "Link",
-   "label": "Template",
-   "options": "WhatsApp Templates",
+   "fieldname": "message",
+   "fieldtype": "Long Text",
+   "label": "Message",
+   "description": "Use field names in curly braces like {customer_name} for dynamic values",
    "reqd": 1
+  },
+  {
+   "fieldname": "code",
+   "fieldtype": "Code",
+   "label": "Code",
+   "options": "Python"
   },
   {
    "fieldname": "condition",
@@ -114,7 +119,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Enter fields in the right sequence as per the template parameters.",
+   "description": "Enter fields that can be used in message with {field_name} syntax. These will be replaced with actual values from the document.",
    "fieldname": "fields",
    "fieldtype": "Table",
    "label": "Fields",
@@ -132,14 +137,14 @@
   },
   {
    "default": "0",
-   "description": "WhatsApp Template requires a document. ",
+   "description": "Attach a PDF print of the document to the WhatsApp message",
    "fieldname": "attach_document_print",
    "fieldtype": "Check",
    "label": " Attach Document Print"
   },
   {
    "default": "0",
-   "description": "WhatsApp Template requires document",
+   "description": "Attach a custom file to the WhatsApp message",
    "fieldname": "custom_attachment",
    "fieldtype": "Check",
    "label": "Custom attachment"
@@ -156,12 +161,6 @@
    "fieldname": "file_name",
    "fieldtype": "Data",
    "label": "File name"
-  },
-  {
-   "fieldname": "header_type",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "Header Type"
   },
   {
    "depends_on": "eval:doc.custom_attachment",

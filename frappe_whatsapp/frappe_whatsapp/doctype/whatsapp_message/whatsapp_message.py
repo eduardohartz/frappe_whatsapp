@@ -3,228 +3,265 @@
 import json
 import frappe
 from frappe.model.document import Document
-from frappe.integrations.utils import make_post_request
+import requests
 
 
 class WhatsAppMessage(Document):
-    """Send whats app messages."""
+    """Send WhatsApp messages using WAHA API."""
 
     def before_insert(self):
         """Send message."""
-        if self.type == "Outgoing" and self.message_type != "Template":
+        if self.type == "Outgoing":
             if self.attach and not self.attach.startswith("http"):
                 link = frappe.utils.get_url() + "/" + self.attach
             else:
                 link = self.attach
 
             data = {
-                "messaging_product": "whatsapp",
-                "to": self.format_number(self.to),
-                "type": self.content_type,
+                "session": self.get_session_name(),
+                "chatId": self.format_number(self.to),
             }
+            
             if self.is_reply and self.reply_to_message_id:
-                data["context"] = {"message_id": self.reply_to_message_id}
-            if self.content_type in ["document", "image", "video"]:
-                data[self.content_type.lower()] = {
-                    "link": link,
-                    "caption": self.message,
+                data["reply_to"] = self.reply_to_message_id
+            
+            if self.content_type == "text":
+                data["text"] = self.message
+                self.send_text(data)
+            elif self.content_type == "image":
+                data["file"] = {
+                    "mimetype": "image/jpeg",
+                    "url": link,
+                    "filename": "image.jpeg"
                 }
-            elif self.content_type == "reaction":
-                data["reaction"] = {
-                    "message_id": self.reply_to_message_id,
-                    "emoji": self.message,
+                if self.message:
+                    data["caption"] = self.message
+                self.send_image(data)
+            elif self.content_type == "video":
+                data["file"] = {
+                    "mimetype": "video/mp4",
+                    "url": link,
+                    "filename": "video.mp4"
                 }
-            elif self.content_type == "text":
-                data["text"] = {"preview_url": True, "body": self.message}
-
+                if self.message:
+                    data["caption"] = self.message
+                self.send_video(data)
             elif self.content_type == "audio":
-                data["text"] = {"link": link}
-
-            try:
-                self.notify(data)
-                self.status = "Success"
-            except Exception as e:
-                self.status = "Failed"
-                frappe.throw(f"Failed to send message {str(e)}")
-        elif self.type == "Outgoing" and self.message_type == "Template" and not self.message_id:
-            self.send_template()
-
-    def send_template(self):
-        """Send template."""
-        template = frappe.get_doc("WhatsApp Templates", self.template)
-        data = {
-            "messaging_product": "whatsapp",
-            "to": self.format_number(self.to),
-            "type": "template",
-            "template": {
-                "name": template.actual_name or template.template_name,
-                "language": {"code": template.language_code},
-                "components": [],
-            },
-        }
-
-        if template.sample_values:
-            field_names = template.field_names.split(",") if template.field_names else template.sample_values.split(",")
-            parameters = []
-            template_parameters = []
-
-            if self.body_param is not None:
-                params = list(json.loads(self.body_param).values())
-                for param in params:
-                    parameters.append({"type": "text", "text": param})
-                    template_parameters.append(param)
-            elif self.flags.custom_ref_doc:
-                custom_values = self.flags.custom_ref_doc
-                for field_name in field_names:
-                    value = custom_values.get(field_name.strip())
-                    parameters.append({"type": "text", "text": value})
-                    template_parameters.append(value)                    
-
-            else:
-                ref_doc = frappe.get_doc(self.reference_doctype, self.reference_name)
-                for field_name in field_names:
-                    value = ref_doc.get_formatted(field_name.strip())
-                    parameters.append({"type": "text", "text": value})
-                    template_parameters.append(value)
-
-            self.template_parameters = json.dumps(template_parameters)
-            data["template"]["components"].append(
-                {
-                    "type": "body",
-                    "parameters": parameters,
+                data["file"] = {
+                    "mimetype": "audio/ogg; codecs=opus",
+                    "url": link
                 }
-            )
+                self.send_voice(data)
+            elif self.content_type == "document":
+                data["file"] = {
+                    "url": link,
+                    "filename": "document.pdf"
+                }
+                if self.message:
+                    data["caption"] = self.message
+                self.send_file(data)
+            elif self.content_type == "reaction":
+                data["messageId"] = self.reply_to_message_id
+                data["reaction"] = self.message
+                self.send_reaction(data)
+            elif self.content_type == "location":
+                location_data = json.loads(self.message) if isinstance(self.message, str) else self.message
+                data["latitude"] = location_data.get("latitude")
+                data["longitude"] = location_data.get("longitude")
+                data["title"] = location_data.get("title", "")
+                self.send_location(data)
+            elif self.content_type == "contact":
+                contact_data = json.loads(self.message) if isinstance(self.message, str) else self.message
+                data["contacts"] = contact_data if isinstance(contact_data, list) else [contact_data]
+                self.send_contact(data)
 
-        if template.header_type:
-            if self.attach:
-                if template.header_type == 'IMAGE':
-
-                    if self.attach.startswith("http"):
-                        url = f'{self.attach}'
-                    else:
-                        url = f'{frappe.utils.get_url()}{self.attach}'
-                    data['template']['components'].append({
-                        "type": "header",
-                        "parameters": [{
-                            "type": "image",
-                            "image": {
-                                "link": url
-                            }
-                        }]
-                    })
-
-            elif template.sample:
-                if template.header_type == 'IMAGE':
-                    if template.sample.startswith("http"):
-                        url = f'{template.sample}'
-                    else:
-                        url = f'{frappe.utils.get_url()}{template.sample}'
-                    data['template']['components'].append({
-                        "type": "header",
-                        "parameters": [{
-                            "type": "image",
-                            "image": {
-                                "link": url
-                            }
-                        }]
-                    })
-
-        self.notify(data)
-
-    def notify(self, data):
-        """Notify."""
-        settings = frappe.get_doc(
-            "WhatsApp Settings",
-            "WhatsApp Settings",
-        )
-        token = settings.get_password("token")
-
-        headers = {
-            "authorization": f"Bearer {token}",
-            "content-type": "application/json",
-        }
+    def send_text(self, data):
+        """Send text message."""
         try:
-            response = make_post_request(
-                f"{settings.url}/{settings.version}/{settings.phone_id}/messages",
-                headers=headers,
-                data=json.dumps(data),
-            )
-            self.message_id = response["messages"][0]["id"]
-
+            response = self.make_waha_request("/api/sendText", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
         except Exception as e:
-            res = frappe.flags.integration_request.json()["error"]
-            error_message = res.get("Error", res.get("message"))
-            frappe.get_doc(
-                {
-                    "doctype": "WhatsApp Notification Log",
-                    "template": "Text Message",
-                    "meta_data": frappe.flags.integration_request.json(),
-                }
-            ).insert(ignore_permissions=True)
+            self.status = "Failed"
+            frappe.throw(f"Failed to send message: {str(e)}")
 
-            frappe.throw(msg=error_message, title=res.get("error_user_title", "Error"))
+    def send_image(self, data):
+        """Send image message."""
+        try:
+            response = self.make_waha_request("/api/sendImage", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send image: {str(e)}")
+
+    def send_video(self, data):
+        """Send video message."""
+        try:
+            response = self.make_waha_request("/api/sendVideo", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send video: {str(e)}")
+
+    def send_voice(self, data):
+        """Send voice message."""
+        try:
+            response = self.make_waha_request("/api/sendVoice", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send voice: {str(e)}")
+
+    def send_file(self, data):
+        """Send file message."""
+        try:
+            response = self.make_waha_request("/api/sendFile", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send file: {str(e)}")
+
+    def send_reaction(self, data):
+        """Send reaction to a message."""
+        try:
+            response = self.make_waha_request("/api/reaction", data, method="PUT")
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send reaction: {str(e)}")
+
+    def send_location(self, data):
+        """Send location message."""
+        try:
+            response = self.make_waha_request("/api/sendLocation", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send location: {str(e)}")
+
+    def send_contact(self, data):
+        """Send contact vcard."""
+        try:
+            response = self.make_waha_request("/api/sendContactVcard", data)
+            if response and response.get("id"):
+                self.message_id = response["id"]
+            self.status = "Success"
+        except Exception as e:
+            self.status = "Failed"
+            frappe.throw(f"Failed to send contact: {str(e)}")
+
+    def make_waha_request(self, endpoint, data, method="POST"):
+        """Make request to WAHA API."""
+        settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+        
+        if not settings.waha_url:
+            frappe.throw("WAHA URL not configured in WhatsApp Settings")
+        
+        api_key = settings.get_password("api_key")
+        url = f"{settings.waha_url.rstrip('/')}{endpoint}"
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        if api_key:
+            headers["X-Api-Key"] = api_key
+        
+        try:
+            if method == "POST":
+                response = requests.post(url, headers=headers, json=data, timeout=30)
+            elif method == "PUT":
+                response = requests.put(url, headers=headers, json=data, timeout=30)
+            
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            error_msg = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    error_msg = error_data.get("message", error_msg)
+                except:
+                    error_msg = e.response.text or error_msg
+            
+            frappe.get_doc({
+                "doctype": "WhatsApp Notification Log",
+                "template": "Text Message",
+                "meta_data": json.dumps({"error": error_msg, "data": data})
+            }).insert(ignore_permissions=True)
+            
+            raise Exception(error_msg)
 
     def format_number(self, number):
-        """Format number."""
+        """Format number to WAHA chatId format (add @c.us suffix)."""
         if number.startswith("+"):
-            number = number[1 : len(number)]
-
+            number = number[1:]
+        
+        number = number.replace(" ", "").replace("-", "")
+        
+        if not number.endswith("@c.us") and not number.endswith("@g.us"):
+            number = f"{number}@c.us"
+        
         return number
+
+    def get_session_name(self):
+        """Get session name from settings."""
+        settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+        return settings.session_name or "default"
 
     @frappe.whitelist()
     def send_read_receipt(self):
+        """Mark message as seen/read."""
+        if not self.message_id:
+            frappe.throw("Message ID is required to send read receipt")
+        
         data = {
-            "messaging_product": "whatsapp",
-            "status": "read",
-            "message_id": self.message_id
+            "session": self.get_session_name(),
+            "chatId": self.format_number(self.get("from") or self.to)
         }
-
-        settings = frappe.get_doc(
-            "WhatsApp Settings",
-            "WhatsApp Settings",
-        )
-
-        token = settings.get_password("token")
-
-        headers = {
-            "authorization": f"Bearer {token}",
-            "content-type": "application/json",
-        }
+        
         try:
-            response = make_post_request(
-                f"{settings.url}/{settings.version}/{settings.phone_id}/messages",
-                headers=headers,
-                data=json.dumps(data),
-            )
-
-            if response.get("success"):
-                self.status = "marked as read"
-                self.save()
-                return response.get("success")
-
+            response = self.make_waha_request("/api/sendSeen", data)
+            self.status = "marked as read"
+            self.save()
+            return True
         except Exception as e:
-            res = frappe.flags.integration_request.json()["error"]
-            error_message = res.get("Error", res.get("message"))
-            frappe.log_error("WhatsApp API Error", f"{error_message}\n{res}")
+            frappe.log_error("WhatsApp API Error", f"Failed to send read receipt: {str(e)}")
+            return False
+
 
 def on_doctype_update():
     frappe.db.add_index("WhatsApp Message", ["reference_doctype", "reference_name"])
 
 
 @frappe.whitelist()
-def send_template(to, reference_doctype, reference_name, template):
+def send_message(to, message, content_type="text", attach=None, reference_doctype=None, reference_name=None):
+    """Helper function to send WhatsApp message."""
     try:
         doc = frappe.get_doc({
             "doctype": "WhatsApp Message",
             "to": to,
             "type": "Outgoing",
-            "message_type": "Template",
+            "message_type": "Manual",
+            "message": message,
+            "content_type": content_type,
+            "attach": attach,
             "reference_doctype": reference_doctype,
-            "reference_name": reference_name,
-            "content_type": "text",
-            "template": template
+            "reference_name": reference_name
         })
-
         doc.save()
+        return doc
     except Exception as e:
+        frappe.log_error("WhatsApp Send Message Error", str(e))
         raise e

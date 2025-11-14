@@ -73,48 +73,34 @@ class BulkWhatsAppMessage(Document):
     
     def create_single_message(self, recipient):
         """Create a single message in the queue"""
-        # message_content = self.message_content
-        
-        # Replace variables in the message if any
         self.status == "In Progress"
+        
+        message_content = self.message_content or ""
+        
         if recipient.get("recipient_data"):
             try:
                 variables = json.loads(recipient.get("recipient_data", "{}"))
-                # for var_name, var_value in variables.items():
-                #     message_content = message_content.replace(f"{{{{{var_name}}}}}", str(var_value))
+                for var_name, var_value in variables.items():
+                    message_content = message_content.replace(f"{{{{{var_name}}}}}", str(var_value))
             except Exception as e:
                 frappe.log_error(f"Error parsing recipient data: {str(e)}", "WhatsApp Bulk Messaging")
         
-        # Create WhatsApp message
         wa_message = frappe.new_doc("WhatsApp Message")
-        # wa_message.from_number = self.from_number
         wa_message.to = recipient.get("mobile_number")
-        wa_message.message_type = "Text"
-        # wa_message.message = message_content
-        wa_message.flags.custom_ref_doc = json.loads(recipient.get("recipient_data", "{}"))
+        wa_message.message_type = "Manual"
+        wa_message.message = message_content
+        wa_message.content_type = self.content_type or "text"
         wa_message.bulk_message_reference = self.name
         
-        # If template is being used
-        if self.use_template:
-            wa_message.template = self.template
-            wa_message.message_type = 'Template'
-            wa_message.use_template = self.use_template
-            # Handle template variables if needed
-
-            if recipient.get("recipient_data") and self.variable_type=='Unique':
-                wa_message.body_param = recipient.get("recipient_data")
-            elif self.template_variables and self.variable_type=='Common':
-                wa_message.body_param = self.template_variables
-            if self.attach:
-                wa_message.attach = self.attach
+        if self.attach:
+            wa_message.attach = self.attach
         
-        # Set status to queued
         wa_message.status = "Queued"
         try:
             wa_message.insert(ignore_permissions=True)
         except Exception:
             self.db_set("status", "Partially Failed")
-        # Update message count
+        
         self.db_set("sent_count", cint(self.sent_count) + 1)
         if self.recipient_count == self.sent_count:
             self.db_set("status", "Completed")

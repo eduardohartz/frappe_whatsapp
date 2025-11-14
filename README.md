@@ -1,58 +1,139 @@
-Frappe Whatsapp
+Frappe WhatsApp
 
 [Docs](https://shridarpatil.github.io/frappe_whatsapp/)
 
-WhatsApp integration for frappe. Use directly meta API's without any 3rd party integration.
+WhatsApp integration for Frappe using WAHA (WhatsApp HTTP API).
 
 [![Whatsapp Video](https://img.youtube.com/vi/nq5Kcc5e1oc/0.jpg)](https://www.youtube.com/watch?v=nq5Kcc5e1oc)
 
-
 [![YouTube](http://i.ytimg.com/vi/TncXQ0UW5UM/hqdefault.jpg)](https://www.youtube.com/watch?v=TncXQ0UW5UM)
-
-
 
 ![whatsapp](https://user-images.githubusercontent.com/11792643/203741234-29edeb1b-e2f9-4072-98c4-d73a84b48743.gif)
 
-Note: If your not using live credential follow the [step no 2](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started) to add the number on meta to which your are sending message
+### Chat app
 
-### Chat app You can also install
-[whatsapp\_chat](https://frappecloud.com/marketplace/apps/whatsapp_chat) along with this app to send and receive message like a messenger Installation Steps
+You can also install [whatsapp_chat](https://frappecloud.com/marketplace/apps/whatsapp_chat) along with this app to send and receive messages like a messenger.
 
-### Step 1) One time to get app 
-`bench get-app https://github.com/shridarpatil/frappe_whatsapp` 
-### Step 2) to install app on any instance/site
-`bench --site [sitename] install-app frappe_whatsapp` 
+## Installation Steps
 
-### Send whatsapp notification from frappe app based on docevents. 
-### Get your whats app credentials 
-https://developers.facebook.com/docs/whatsapp/cloud-api/get-started 
-#### Enter whatsapp credentials ![image](https://user-images.githubusercontent.com/11792643/198827382-90283b36-f8ab-430e-a909-1b600d6f5da4.png) 
+### Step 1) Get the app
 
-#### Create Template ![image](https://user-images.githubusercontent.com/11792643/198827355-ebf9c113-f39a-4d37-98f7-38f719fb2d1f.png) Supports all docevents 
+```bash
+bench get-app https://github.com/shridarpatil/frappe_whatsapp
+```
 
-#### Create notifications ![whatsapp_notification](https://user-images.githubusercontent.com/11792643/198827295-f6d756a3-6289-40b3-99ea-0394efb61041.png) 
+### Step 2) Install app on any instance/site
 
-### Sending text message without creating template Create an entry in the WhatsApp message. On save it will trigger and whats app API to send a message ![image](https://user-images.githubusercontent.com/11792643/211518862-de2d3fbc-69c8-48e1-b000-8eebf20b75ab.png) WhatsApp messages are received via WhatsApp cloud API.![image](https://user-images.githubusercontent.com/11792643/211519625-a528abe2-ba24-46a4-bcbc-170f6b4e27fb.png) ![outgoing (1)](https://user-images.githubusercontent.com/11792643/211518647-45bfaa00-b06a-49c6-a3b3-3cf801d5ec68.gif) 
+```bash
+bench --site [sitename] install-app frappe_whatsapp
+```
 
-### Sending a template using custom _dict() insted of a doctype.
-This can be very useful for features where it is not possible to get the values directly from the doctype.
-Just create a script and populate variable called "_data_list":
-`doc.set("_data_list", data_list)`
+## Configuration
 
-Example:
-![image](https://github.com/user-attachments/assets/7496b081-df2b-41dc-bdcb-ed7e5f464698)
+### Set up WAHA Server
 
-### Incomming message 
-* Setup webhook on meta 
-* Add verify token on meta and update the same on whatsapp settings 
-* Add webhook url on meta
-`<domain >/api/method/frappe_whatsapp.utils.webhook.webhook` 
-* Add apropriate webhook fields 
-* `messages` to receive message 
-* add other required web fields 
+1. Install and run WAHA server (https://waha.devlike.pro/)
+2. Start a WhatsApp session in WAHA
+3. Scan QR code to authenticate
 
-### Upcoming features 
-* Update templates on facebook dev. 
-* Display template status 
- 
-#### License MIT
+### Enter WAHA Credentials in Frappe
+
+Navigate to **WhatsApp Settings** and configure:
+
+-   **WAHA URL**: Your WAHA server URL (e.g., `http://localhost:3000`)
+-   **API Key**: Your WAHA X-Api-Key (if authentication is enabled)
+-   **Session Name**: WAHA session name (default: `default`)
+-   **Webhook HMAC Secret**: Secret key for webhook authentication (optional but recommended)
+
+## Features
+
+### Send WhatsApp Notifications
+
+Create notifications based on DocType events to automatically send WhatsApp messages.
+
+### Send Text Messages
+
+Create an entry in the WhatsApp Message doctype. On save, it will trigger the WAHA API to send a message.
+
+### Receive Messages
+
+Messages are received via WAHA webhooks and automatically created in the WhatsApp Message doctype.
+
+### Bulk Messaging
+
+Send bulk WhatsApp messages to multiple recipients using the Bulk WhatsApp Message doctype.
+
+## Webhook Setup
+
+### Configure Webhook in WAHA
+
+When starting your WAHA session, configure the webhook URL in the session config:
+
+```json
+{
+    "name": "default",
+    "config": {
+        "webhooks": [
+            {
+                "url": "https://yourdomain.com/api/method/frappe_whatsapp.utils.webhook.webhook",
+                "events": ["message", "message.any", "message.reaction", "message.ack", "message.revoked", "session.status"],
+                "hmac": {
+                    "key": "your-secret-key-from-whatsapp-settings"
+                }
+            }
+        ]
+    }
+}
+```
+
+**Webhook URL**: `https://yourdomain.com/api/method/frappe_whatsapp.utils.webhook.webhook`
+
+**Important**:
+
+-   Use the same HMAC secret key in both WAHA config and WhatsApp Settings
+-   Make sure your domain is accessible from the WAHA server
+-   Configure the webhook when creating/starting the session in WAHA
+
+### Webhook Events
+
+The following events are supported:
+
+-   `message` - Incoming messages
+-   `message.any` - All messages (including outgoing)
+-   `message.reaction` - Message reactions
+-   `message.ack` - Message acknowledgments
+-   `message.revoked` - Deleted messages
+-   `session.status` - Session status changes
+
+## Usage Examples
+
+### Send a Simple Message
+
+```python
+frappe.get_doc({
+    "doctype": "WhatsApp Message",
+    "to": "+1234567890",
+    "type": "Outgoing",
+    "message_type": "Manual",
+    "message": "Hello from Frappe!",
+    "content_type": "text"
+}).insert()
+```
+
+### Send an Image
+
+```python
+frappe.get_doc({
+    "doctype": "WhatsApp Message",
+    "to": "+1234567890",
+    "type": "Outgoing",
+    "message_type": "Manual",
+    "message": "Check this out!",
+    "content_type": "image",
+    "attach": "/files/image.jpg"
+}).insert()
+```
+
+#### License
+
+MIT
