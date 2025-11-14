@@ -110,7 +110,7 @@ def handle_message(message, session):
 	except Exception as e:
 		frappe.log_error(
 			"WhatsApp Message Insert Failed",
-			f"Error inserting WhatsApp Message from {from_number}: {str(e)}\n\nMessage Data: {json.dumps(message, indent=2)}"
+			f"Error inserting WhatsApp Message from {from_number}: {str(e)}\n\nTraceback:\n{frappe.get_traceback()}\n\nMessage Data: {json.dumps(message, indent=2)}"
 		)
 
 
