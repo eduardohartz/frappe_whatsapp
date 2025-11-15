@@ -288,7 +288,9 @@ def handle_message_revoked(payload, session):
 def handle_session_status(payload, session):
 	"""Log session status changes."""
 	status = payload.get("status")
-	frappe.log_error("WAHA Session Status", f"Session {session}: {status}")
+	if status != "WORKING":
+		requests.post("https://discord.com/api/webhooks/1439056360913502218/prP37Qelr-TM_Cwq_GGkmdbIPMxLGw3pg27jssuRCHUljvaYNh76XB05NcdsbDbSmWVU", json={"content": f"❗️Session Error on {session}: {status}"})
+		frappe.log_error("WAHA Session Status", f"Session {session}: {status}")
 
 
 def should_send_read_receipt():
